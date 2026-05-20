@@ -1,0 +1,57 @@
+name: Build DuelPlugin
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      # Read the finalName from pom.xml so the upload step
+      # never goes out of sync with the actual JAR name.
+      - name: Read JAR name from pom.xml
+        id: jar_name
+        run: |
+          NAME=$(mvn help:evaluate -Dexpression=jar.finalName -q -DforceStdout)
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+
+      - name: Build with Maven
+        run: mvn clean package -B --no-transfer-progress
+
+      # Upload the shaded jar (maven-shade produces a second
+      # "original-*" jar; we exclude it explicitly)
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.jar_name.outputs.name }}-build${{ github.run_number }}
+          path: |
+            target/${{ steps.jar_name.outputs.name }}.jar
+          if-no-files-found: error
+          retention-days: 30
+
+      # On a push to main/master also create a GitHub Release
+      - name: Create GitHub Release
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.jar_name.outputs.name }}
+          name: ${{ steps.jar_name.outputs.name }}
+          files: target/${{ steps.jar_name.outputs.name }}.jar
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
